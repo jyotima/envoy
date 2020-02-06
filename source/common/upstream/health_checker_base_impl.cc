@@ -191,15 +191,17 @@ void HealthCheckerImplBase::runCallbacks(HostSharedPtr host, HealthTransition ch
   }
 }
 
-void HealthCheckerImplBase::HealthCheckHostMonitorImpl::setUnhealthy() {
+void HealthCheckerImplBase::HealthCheckHostMonitorImpl::setUnhealthy(
+    bool isImmediateHealthCheckFailure) {
   // This is called cross thread. The cluster/health checker might already be gone.
   std::shared_ptr<HealthCheckerImplBase> health_checker = health_checker_.lock();
   if (health_checker) {
-    health_checker->setUnhealthyCrossThread(host_.lock());
+    health_checker->setUnhealthyCrossThread(host_.lock(), isImmediateHealthCheckFailure);
   }
 }
 
-void HealthCheckerImplBase::setUnhealthyCrossThread(const HostSharedPtr& host) {
+void HealthCheckerImplBase::setUnhealthyCrossThread(const HostSharedPtr& host,
+                                                    bool isImmediateHealthCheckFailure) {
   // The threading here is complex. The cluster owns the only strong reference to the health
   // checker. It might go away when we post to the main thread from a worker thread. To deal with
   // this we use the following sequence of events:
@@ -208,7 +210,7 @@ void HealthCheckerImplBase::setUnhealthyCrossThread(const HostSharedPtr& host) {
   // 2) On the main thread, we make sure it is still valid (as the cluster may have been destroyed).
   // 3) Additionally, the host/session may also be gone by then so we check that also.
   std::weak_ptr<HealthCheckerImplBase> weak_this = shared_from_this();
-  dispatcher_.post([weak_this, host]() -> void {
+  dispatcher_.post([weak_this, host, isImmediateHealthCheckFailure]() -> void {
     std::shared_ptr<HealthCheckerImplBase> shared_this = weak_this.lock();
     if (shared_this == nullptr) {
       return;
@@ -219,7 +221,7 @@ void HealthCheckerImplBase::setUnhealthyCrossThread(const HostSharedPtr& host) {
       return;
     }
 
-    session->second->setUnhealthy(envoy::data::core::v3::PASSIVE);
+    session->second->setUnhealthy(envoy::data::core::v3::PASSIVE, isImmediateHealthCheckFailure);
   });
 }
 
@@ -283,6 +285,9 @@ void HealthCheckerImplBase::ActiveHealthCheckSession::handleSuccess(bool degrade
     } else {
       changed_state = HealthTransition::ChangePending;
     }
+  } else if (host_->healthFlagGet(Host::HealthFlag::EXCLUDE_FROM_LB)) {
+    host_->healthFlagClear(Host::HealthFlag::EXCLUDE_FROM_LB);
+    changed_state = HealthTransition::ChangePending;
   }
 
   changed_state = clearPendingFlag(changed_state);
@@ -318,12 +323,16 @@ void HealthCheckerImplBase::ActiveHealthCheckSession::handleSuccess(bool degrade
 }
 
 HealthTransition HealthCheckerImplBase::ActiveHealthCheckSession::setUnhealthy(
-    envoy::data::core::v3::HealthCheckFailureType type) {
+    envoy::data::core::v3::HealthCheckFailureType type, bool isImmediateHealthCheckFailure) {
   // If we are unhealthy, reset the # of healthy to zero.
   num_healthy_ = 0;
 
   HealthTransition changed_state = HealthTransition::Unchanged;
-  if (!host_->healthFlagGet(Host::HealthFlag::FAILED_ACTIVE_HC)) {
+  if (isImmediateHealthCheckFailure) {
+    // This condition means this is a fresh change from a previous state to EXCLUDE_FROM_LB
+    host_->healthFlagSet(Host::HealthFlag::EXCLUDE_FROM_LB);
+    changed_state = HealthTransition::ChangePending;
+  } else if (!host_->healthFlagGet(Host::HealthFlag::FAILED_ACTIVE_HC)) {
     if (type != envoy::data::core::v3::NETWORK ||
         ++num_unhealthy_ == parent_.unhealthy_threshold_) {
       host_->healthFlagSet(Host::HealthFlag::FAILED_ACTIVE_HC);
@@ -356,8 +365,8 @@ HealthTransition HealthCheckerImplBase::ActiveHealthCheckSession::setUnhealthy(
 }
 
 void HealthCheckerImplBase::ActiveHealthCheckSession::handleFailure(
-    envoy::data::core::v3::HealthCheckFailureType type) {
-  HealthTransition changed_state = setUnhealthy(type);
+    envoy::data::core::v3::HealthCheckFailureType type, bool isImmediateHealthCheckFailure) {
+  HealthTransition changed_state = setUnhealthy(type, isImmediateHealthCheckFailure);
   // It's possible that the previous call caused this session to be deferred deleted.
   if (timeout_timer_ != nullptr) {
     timeout_timer_->disableTimer();

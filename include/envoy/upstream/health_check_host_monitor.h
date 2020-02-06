@@ -21,7 +21,7 @@ public:
    * Mark the host as unhealthy. Note that this may not be immediate as events may need to be
    * propagated between multiple threads.
    */
-  virtual void setUnhealthy() PURE;
+  virtual void setUnhealthy(bool isImmediateHealthCheckFailure) PURE;
 };
 
 using HealthCheckHostMonitorPtr = std::unique_ptr<HealthCheckHostMonitor>;

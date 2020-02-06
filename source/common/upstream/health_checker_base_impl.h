@@ -54,7 +54,8 @@ protected:
   class ActiveHealthCheckSession : public Event::DeferredDeletable {
   public:
     ~ActiveHealthCheckSession() override;
-    HealthTransition setUnhealthy(envoy::data::core::v3::HealthCheckFailureType type);
+    HealthTransition setUnhealthy(envoy::data::core::v3::HealthCheckFailureType type,
+                                  bool isImmediateHealthCheckFailure = false);
     void onDeferredDeleteBase();
     void start() { onInitialInterval(); }
 
@@ -63,7 +64,8 @@ protected:
 
     void handleSuccess(bool degraded = false);
     void handleDegraded();
-    void handleFailure(envoy::data::core::v3::HealthCheckFailureType type);
+    void handleFailure(envoy::data::core::v3::HealthCheckFailureType type,
+                       bool isImmediateHealthCheckFailure = false);
 
     HostSharedPtr host_;
 
@@ -116,7 +118,7 @@ private:
         : health_checker_(health_checker), host_(host) {}
 
     // Upstream::HealthCheckHostMonitor
-    void setUnhealthy() override;
+    void setUnhealthy(bool isImmediateHealthCheckFailure) override;
 
     std::weak_ptr<HealthCheckerImplBase> health_checker_;
     std::weak_ptr<Host> host_;
@@ -134,7 +136,7 @@ private:
   void onClusterMemberUpdate(const HostVector& hosts_added, const HostVector& hosts_removed);
   void refreshHealthyStat();
   void runCallbacks(HostSharedPtr host, HealthTransition changed_state);
-  void setUnhealthyCrossThread(const HostSharedPtr& host);
+  void setUnhealthyCrossThread(const HostSharedPtr& host, bool isImmediateHealthCheckFailure);
   static std::shared_ptr<const Network::TransportSocketOptionsImpl>
   initTransportSocketOptions(const envoy::config::core::v3::HealthCheck& config);
 

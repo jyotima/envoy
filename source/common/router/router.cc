@@ -941,15 +941,15 @@ void Filter::onUpstreamAbort(Http::Code code, StreamInfo::ResponseFlag response_
 
     callbacks_->streamInfo().setResponseFlag(response_flags);
 
-    callbacks_->sendLocalReply(
-        code, body,
-        [dropped, this](Http::HeaderMap& headers) {
-          if (dropped && !config_.suppress_envoy_headers_) {
-            headers.setReferenceEnvoyOverloaded(Http::Headers::get().EnvoyOverloadedValues.True);
-          }
-          modify_headers_(headers);
-        },
-        absl::nullopt, details);
+    callbacks_->sendLocalReply(code, body,
+                               [dropped, this](Http::HeaderMap& headers) {
+                                 if (dropped && !config_.suppress_envoy_headers_) {
+                                   headers.setReferenceEnvoyOverloaded(
+                                       Http::Headers::get().EnvoyOverloadedValues.True);
+                                 }
+                                 modify_headers_(headers);
+                               },
+                               absl::nullopt, details);
   }
 }
 
@@ -1130,7 +1130,7 @@ void Filter::onUpstreamHeaders(uint64_t response_code, Http::HeaderMapPtr&& head
   }
 
   if (headers->EnvoyImmediateHealthCheckFail() != nullptr) {
-    upstream_request.upstream_host_->healthChecker().setUnhealthy();
+    upstream_request.upstream_host_->healthChecker().setUnhealthy(true);
   }
 
   bool could_not_retry = false;
